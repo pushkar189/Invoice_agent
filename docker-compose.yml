@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: invoice-agent-backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: ${DATABASE_URL}
+      OLLAMA_URL: http://host.docker.internal:11434
+      MODEL_NAME: ${MODEL_NAME:-gemma4:12b}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: http://localhost:80
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE_MB: 10
+      FINANCIAL_TOLERANCE: 0.01
+    volumes:
+      - invoice_uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    container_name: invoice-agent-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  invoice_uploads:
+    driver: local
