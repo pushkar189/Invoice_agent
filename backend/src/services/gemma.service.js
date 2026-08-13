@@ -3,66 +3,59 @@ import { extractJSON } from '../utils/jsonParser.js';
 import { ExtractedInvoiceSchema } from '../validators/invoice.schema.js';
 import { logger } from '../utils/logger.js';
 
-const EXTRACTION_PROMPT = `You are an expert invoice data extraction system.
+const EXTRACTION_PROMPT = `You are an invoice data extraction engine. Extract data from the invoice text below and output ONLY a single valid JSON object. No explanations, no markdown, no code fences.
 
-Your task is to extract structured information from the supplied invoice text and return it as JSON.
+RULES:
+- Output ONLY JSON. Start with { and end with }.
+- Use null (not the string "null") for any field not found in the invoice.
+- Numbers must be numeric (not quoted strings). Use 0 if a number is not found.
+- Dates must be in YYYY-MM-DD format or null.
+- Extract ALL line items from the invoice.
+- Default currency to "INR" for Indian invoices.
+- Do not calculate — extract only what is printed.
 
-RULES (follow strictly):
-1. Return ONLY valid JSON - no markdown, no code blocks, no explanations
-2. Never invent or guess information not present in the invoice
-3. Use null for fields that are not found in the invoice
-4. Preserve invoice numbers exactly as they appear
-5. Preserve dates in their original format or convert to YYYY-MM-DD
-6. Extract ALL line items found
-7. Extract vendor and customer information separately
-8. Extract GSTIN wherever present
-9. Extract subtotal, discounts, CGST, SGST, IGST, and total
-10. Extract currency (default to INR if Indian invoice)
-11. Do not perform financial calculations - extract only what is printed
-12. Backend will independently verify all calculations
-
-Return this exact JSON structure:
+Output this exact structure (replace example values with real extracted values):
 {
-  "invoiceNumber": "string or null",
-  "invoiceDate": "YYYY-MM-DD or null",
-  "dueDate": "YYYY-MM-DD or null",
+  "invoiceNumber": "INV-001",
+  "invoiceDate": "2024-01-15",
+  "dueDate": null,
   "vendor": {
-    "name": "string or null",
-    "gstin": "string or null",
-    "address": "string or null",
-    "email": "string or null",
-    "phone": "string or null"
+    "name": "Vendor Company Name",
+    "gstin": "29ABCDE1234F1Z5",
+    "address": "123 Street, City, State",
+    "email": null,
+    "phone": null
   },
   "customer": {
-    "name": "string or null",
-    "gstin": "string or null",
-    "address": "string or null",
-    "email": "string or null",
-    "phone": "string or null"
+    "name": "Customer Company Name",
+    "gstin": null,
+    "address": "456 Avenue, City, State",
+    "email": null,
+    "phone": null
   },
   "items": [
     {
-      "description": "string",
-      "quantity": number,
-      "unitPrice": number,
-      "taxRate": number,
-      "taxAmount": number,
-      "discount": number,
-      "total": number
+      "description": "Product or Service Name",
+      "quantity": 2,
+      "unitPrice": 500.00,
+      "taxRate": 18,
+      "taxAmount": 180.00,
+      "discount": 0,
+      "total": 1180.00
     }
   ],
   "financials": {
-    "subtotal": number,
-    "discount": number,
-    "cgst": number,
-    "sgst": number,
-    "igst": number,
-    "total": number
+    "subtotal": 1000.00,
+    "discount": 0,
+    "cgst": 90.00,
+    "sgst": 90.00,
+    "igst": 0,
+    "total": 1180.00
   },
   "currency": "INR"
 }
 
-INVOICE TEXT TO EXTRACT:
+INVOICE TEXT:
 `;
 
 /**
@@ -77,15 +70,18 @@ export const extractInvoiceData = async (invoiceText) => {
     });
   }
 
-  const prompt = EXTRACTION_PROMPT + invoiceText.slice(0, 8000); // Limit to 8K chars for context
+  const promptText = trimInvoiceText(invoiceText);
+  const prompt = EXTRACTION_PROMPT + promptText;
 
   let rawResponse = '';
   let processingTimeMs = 0;
 
   try {
-    const result = await generate(prompt, { temperature: 0.05 });
+    // Use default num_predict (4096) from ollama.service to avoid truncating large invoice JSON
+    const result = await generate(prompt, { temperature: 0.05, top_p: 0.9 });
     rawResponse = result.text;
     processingTimeMs = result.processingTimeMs;
+    logger.debug(`Raw Gemma response (first 800 chars): ${rawResponse.slice(0, 800)}`);
   } catch (err) {
     throw err;
   }
@@ -140,28 +136,34 @@ const calculateConfidence = (data) => {
  * Generate a natural language response from structured data using Gemma.
  */
 export const generateNaturalLanguage = async (systemContext, userQuestion, toolResults) => {
-  const prompt = `You are an AI assistant for an invoice management system.
+  // Truncate tool results to avoid bloating the prompt (keep max 3000 chars)
+  const toolResultsStr = JSON.stringify(toolResults).slice(0, 3000);
 
-Context about the user's invoice data:
-${systemContext}
+  const prompt = `You are a concise AI assistant for an invoice management system.
 
-Tool results (from database queries):
-${JSON.stringify(toolResults, null, 2)}
+Data: ${toolResultsStr}
 
-User question: ${userQuestion}
+Context: ${systemContext}
 
-Instructions:
-- Answer the question based ONLY on the provided tool results
-- Format currency amounts with ₹ symbol and Indian number formatting
-- Be concise and professional
-- If the data is empty, say so clearly
-- Do not make up invoice details
-- Highlight important numbers and dates
+Question: ${userQuestion}
+
+Rules:
+- Answer in 2-4 sentences max. Be direct and concise.
+- Use ₹ symbol for Indian Rupee amounts.
+- Only use the data provided above. Do not guess.
+- If data is empty or null, say so clearly.
 
 Answer:`;
 
-  const result = await generate(prompt, { temperature: 0.3, num_predict: 1024 });
+  // Lower num_predict for faster chat responses; 512 is enough for concise answers
+  const result = await generate(prompt, { temperature: 0.1, num_predict: 512 });
   return result.text.trim();
+};
+
+const trimInvoiceText = (invoiceText) => {
+  // Rather than aggressively filtering lines which destroys context, 
+  // we simply limit the text length to ensure fast processing while keeping the structure intact.
+  return invoiceText.slice(0, 6000);
 };
 
 export default { extractInvoiceData, generateNaturalLanguage };

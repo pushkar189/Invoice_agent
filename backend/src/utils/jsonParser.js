@@ -7,6 +7,16 @@ import { logger } from './logger.js';
 export const extractJSON = (text) => {
   if (!text || typeof text !== 'string') return null;
 
+  // Helper to parse with logging on failure
+  const tryParse = (str) => {
+    try {
+      return JSON.parse(str.trim());
+    } catch (e) {
+      logger.warn(`Failed to parse JSON: ${e.message}. Raw content: ${str.substring(0, 100)}...`);
+      return null;
+    }
+  };
+
   // Try direct parse first
   try {
     return JSON.parse(text.trim());
@@ -15,28 +25,35 @@ export const extractJSON = (text) => {
   // Strip markdown code blocks
   const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
-    try {
-      return JSON.parse(codeBlockMatch[1].trim());
-    } catch {}
+    const parsed = tryParse(codeBlockMatch[1]);
+    if (parsed) return parsed;
   }
 
-  // Find first { ... } block
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    try {
-      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
-    } catch {}
-  }
+  // Find balanced blocks using a depth scanner
+  const findBalanced = (input, openChar, closeChar) => {
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < input.length; i++) {
+      if (input[i] === openChar) {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (input[i] === closeChar) {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const content = input.slice(start, i + 1);
+          const parsed = tryParse(content);
+          if (parsed) return parsed;
+        }
+      }
+    }
+    return null;
+  };
 
-  // Find first [ ... ] block
-  const firstBracket = text.indexOf('[');
-  const lastBracket = text.lastIndexOf(']');
-  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-    try {
-      return JSON.parse(text.slice(firstBracket, lastBracket + 1));
-    } catch {}
-  }
+  const objectResult = findBalanced(text, '{', '}');
+  if (objectResult) return objectResult;
+
+  const arrayResult = findBalanced(text, '[', ']');
+  if (arrayResult) return arrayResult;
 
   logger.warn('Could not extract JSON from AI response');
   return null;

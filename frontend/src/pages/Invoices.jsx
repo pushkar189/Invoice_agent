@@ -103,9 +103,23 @@ const Invoices = () => {
                 <td className="table-cell text-slate-600">{formatDate(inv.invoice_date)}</td>
                 <td className="table-cell text-slate-600">{formatDate(inv.due_date)}</td>
                 <td className="table-cell text-right font-semibold text-slate-900">{formatCurrency(inv.total)}</td>
-                <td className="table-cell"><StatusBadge status={inv.status} /></td>
-                <td className="table-cell"><ValidationBadge status={inv.validation_status} /></td>
-                <td className="table-cell"><FlagCount count={inv.flag_count} /></td>
+                <td className="table-cell">
+                  <StatusBadge status={['FAILED', 'PROCESSING'].includes(inv.extraction_status) ? inv.extraction_status : inv.status} />
+                </td>
+                <td className="table-cell">
+                  {['FAILED', 'PROCESSING'].includes(inv.extraction_status) ? (
+                    <span className="text-slate-400 text-xs">—</span>
+                  ) : (
+                    <ValidationBadge status={inv.validation_status} />
+                  )}
+                </td>
+                <td className="table-cell">
+                  {['FAILED', 'PROCESSING'].includes(inv.extraction_status) ? (
+                    <span className="text-slate-400 text-xs">—</span>
+                  ) : (
+                    <FlagCount count={inv.flag_count} />
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

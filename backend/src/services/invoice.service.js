@@ -3,8 +3,6 @@ import db from '../config/database.js';
 import { extractTextFromPDF } from './pdf.service.js';
 import { extractTextFromImage } from './ocr.service.js';
 import { extractInvoiceData } from './gemma.service.js';
-import { validateAndPersist } from './validation.service.js';
-import { detectDuplicates } from './duplicate.service.js';
 import { detectAnomalies } from './anomaly.service.js';
 import { config } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -106,6 +104,39 @@ const createInvoiceRecord = async (invoiceData) => {
   return rows[0].id;
 };
 
+export const createPlaceholderInvoiceRecord = async (file) => {
+  const { rows } = await db.query(
+    `INSERT INTO invoices
+      (invoice_number, vendor_id, customer_id, invoice_date, due_date,
+       subtotal, discount, cgst, sgst, igst, total, currency,
+       status, original_file_name, stored_file_name, file_path,
+       extraction_status, validation_status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+     RETURNING id`,
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      'INR',
+      'PENDING',
+      file.originalname,
+      file.filename,
+      file.path,
+      'PROCESSING',
+      'REVIEW_REQUIRED',
+    ]
+  );
+  return rows[0].id;
+};
+
 /**
  * STEP 5: Insert line items.
  */
@@ -142,14 +173,13 @@ const saveExtractionRecord = async (invoiceId, extractionResult) => {
 /**
  * Determine final invoice status based on flags, validation, confidence.
  */
-const determineStatus = (validationResult, allFlags, confidenceScore) => {
+const determineStatus = (allFlags, confidenceScore) => {
   const hasHighFlags = allFlags.some(f => f.severity === 'HIGH');
-  const hasDuplicate = allFlags.some(f => f.type === 'DUPLICATE');
 
-  if (hasDuplicate || hasHighFlags || validationResult.status === 'INVALID') {
+  if (hasHighFlags) {
     return { invoiceStatus: 'REVIEW', validationStatus: 'REVIEW_REQUIRED' };
   }
-  if (validationResult.status === 'WARNING' || confidenceScore < 0.6) {
+  if (confidenceScore < 0.6) {
     return { invoiceStatus: 'PENDING', validationStatus: 'WARNING' };
   }
   return { invoiceStatus: 'PENDING', validationStatus: 'VALID' };
@@ -159,26 +189,35 @@ const determineStatus = (validationResult, allFlags, confidenceScore) => {
  * Main invoice processing pipeline.
  * upload → extract text → OCR if needed → Gemma → validate → duplicate detect → anomaly detect → persist
  */
-export const processInvoice = async (file) => {
+export const processInvoice = async (file, existingInvoiceId = null) => {
   const filePath = file.path;
   const originalFileName = file.originalname;
   const storedFileName = file.filename;
+  let invoiceId = existingInvoiceId;
 
   logger.info(`=== Starting invoice processing pipeline for: ${originalFileName} ===`);
-
-  // Update extraction status
-  let invoiceId = null;
 
   try {
     // STEP 1: Extract text
     logger.info('[1/7] Extracting text from file...');
     const invoiceText = await extractTextFromFile(filePath, file.mimetype);
-    if (!invoiceText || invoiceText.trim().length < 20) {
-      throw Object.assign(new Error('Could not extract readable text from the invoice file'), {
+    if (!invoiceText || invoiceText.trim().length < 30) {
+      throw Object.assign(new Error(
+        `Could not extract any readable text from the invoice. Only ${invoiceText?.trim().length || 0} characters were read. ` +
+        'Please upload a higher-resolution image or a text-based PDF.'
+      ), {
         errorCode: 'TEXT_EXTRACTION_FAILED',
         statusCode: 422,
       });
     }
+
+    // OCR quality check — warn but continue; AI will extract what it can
+    const alphaCount = (invoiceText.match(/[a-zA-Z0-9]/g) || []).length;
+    const qualityRatio = alphaCount / invoiceText.trim().length;
+    if (qualityRatio < 0.3) {
+      logger.warn(`Low OCR quality (${(qualityRatio * 100).toFixed(1)}% alphanumeric) — AI will attempt extraction on best-effort basis.`);
+    }
+    logger.info(`[1/7] Extracted ${invoiceText.trim().length} chars (quality: ${(qualityRatio * 100).toFixed(0)}%) from file.`);
 
     // STEP 2: AI Extraction via Gemma
     logger.info('[2/7] Sending to Gemma for AI extraction...');
@@ -190,16 +229,52 @@ export const processInvoice = async (file) => {
     const vendorId = await upsertVendor(structured.vendor);
     const customerId = await upsertCustomer(structured.customer);
 
-    // STEP 4: Create invoice record
-    logger.info('[4/7] Creating invoice record...');
-    invoiceId = await createInvoiceRecord({
-      ...structured,
-      vendorId,
-      customerId,
-      originalFileName,
-      storedFileName,
-      filePath,
-    });
+    if (!invoiceId) {
+      // STEP 4: Create invoice record
+      logger.info('[4/7] Creating invoice record...');
+      invoiceId = await createInvoiceRecord({
+        ...structured,
+        vendorId,
+        customerId,
+        originalFileName,
+        storedFileName,
+        filePath,
+      });
+    } else {
+      logger.info('[4/7] Updating placeholder invoice record...');
+      await db.query(
+        `UPDATE invoices SET
+           invoice_number = $1,
+           vendor_id = $2,
+           customer_id = $3,
+           invoice_date = $4,
+           due_date = $5,
+           subtotal = $6,
+           discount = $7,
+           cgst = $8,
+           sgst = $9,
+           igst = $10,
+           total = $11,
+           currency = $12,
+           updated_at = NOW()
+         WHERE id = $13`,
+        [
+          structured.invoiceNumber,
+          vendorId,
+          customerId,
+          structured.invoiceDate,
+          structured.dueDate,
+          structured.financials.subtotal,
+          structured.financials.discount,
+          structured.financials.cgst,
+          structured.financials.sgst,
+          structured.financials.igst,
+          structured.financials.total,
+          structured.currency || 'INR',
+          invoiceId,
+        ]
+      );
+    }
 
     // STEP 5: Insert items
     logger.info('[5/7] Inserting line items...');
@@ -210,19 +285,10 @@ export const processInvoice = async (file) => {
     // STEP 6: Save AI extraction record
     await saveExtractionRecord(invoiceId, extractionResult);
 
-    // STEP 7: Financial validation
-    logger.info('[6/7] Running financial validation...');
-    const validationResult = await validateAndPersist(
-      invoiceId,
-      structured,
-      config.validation.financialTolerance
-    );
-
-    // STEP 7: Duplicate + anomaly detection
-    logger.info('[7/7] Running duplicate and anomaly detection...');
-    const duplicateFlags = await detectDuplicates(invoiceId, structured);
-    const anomalyFlags = await detectAnomalies(invoiceId, structured, validationResult);
-    const allFlags = [...duplicateFlags, ...anomalyFlags];
+    // STEP 7: Anomaly detection
+    logger.info('[6/6] Running anomaly detection...');
+    const anomalyFlags = await detectAnomalies(invoiceId, structured, null);
+    const allFlags = [...anomalyFlags];
 
     // Add LOW_CONFIDENCE flag if needed
     if (extractionResult.confidenceScore < 0.5) {
@@ -236,11 +302,11 @@ export const processInvoice = async (file) => {
     }
 
     // Determine final status
-    const { invoiceStatus, validationStatus } = determineStatus(validationResult, allFlags, extractionResult.confidenceScore);
+    const { invoiceStatus, validationStatus } = determineStatus(allFlags, extractionResult.confidenceScore);
 
     // Update final statuses
     await db.query(
-      `UPDATE invoices SET status = $1, validation_status = $2 WHERE id = $3`,
+      `UPDATE invoices SET status = $1, validation_status = $2, extraction_status = 'COMPLETED' WHERE id = $3`,
       [invoiceStatus, validationStatus, invoiceId]
     );
 
@@ -256,17 +322,17 @@ export const processInvoice = async (file) => {
       confidenceScore: extractionResult.confidenceScore,
       flagCount: allFlags.length,
       flags: allFlags,
-      validationResult,
     };
   } catch (err) {
-    // If invoice was created, mark it as failed
+    // Mark invoice as failed and store the reason
     if (invoiceId) {
       await db.query(
-        `UPDATE invoices SET extraction_status = 'FAILED' WHERE id = $1`,
+        `UPDATE invoices SET extraction_status = 'FAILED', updated_at = NOW() WHERE id = $1`,
         [invoiceId]
-      );
+      ).catch(() => {});
     }
-    logger.error(`Invoice processing pipeline failed: ${err.message}`);
+    logger.error(`Invoice processing pipeline FAILED for ${originalFileName}: [${err.errorCode || 'ERROR'}] ${err.message}`);
+    logger.debug(err.stack);
     throw err;
   }
 };
@@ -364,4 +430,4 @@ export const getInvoiceById = async (id) => {
   };
 };
 
-export default { processInvoice, getInvoices, getInvoiceById };
+export default { processInvoice, createPlaceholderInvoiceRecord, getInvoices, getInvoiceById };

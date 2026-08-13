@@ -4,15 +4,14 @@ services:
   backend:
     build: ./backend
     container_name: invoice-agent-backend
+    env_file:
+      - ./backend/.env
     ports:
       - "5000:5000"
     environment:
       NODE_ENV: production
       PORT: 5000
-      DATABASE_URL: ${DATABASE_URL}
       OLLAMA_URL: http://host.docker.internal:11434
-      MODEL_NAME: ${MODEL_NAME:-gemma4:12b}
-      JWT_SECRET: ${JWT_SECRET}
       FRONTEND_URL: http://localhost:80
       UPLOAD_DIR: /app/uploads
       MAX_FILE_SIZE_MB: 10

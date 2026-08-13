@@ -26,8 +26,10 @@ const InvoiceDetails = () => {
   const load = async () => {
     try {
       const res = await invoicesApi.get(id);
-      setInvoice(res.data.data);
-      setNewStatus(res.data.data.status);
+      const data = res.data.data;
+      setInvoice(data);
+      setNewStatus(data.status);
+      return data;
     } catch (err) {
       setError(err.response?.data?.message || 'Invoice not found');
     } finally {
@@ -35,7 +37,21 @@ const InvoiceDetails = () => {
     }
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { 
+    load(); 
+  }, [id]);
+
+  useEffect(() => {
+    if (invoice && invoice.extraction_status === 'PROCESSING') {
+      const interval = setInterval(async () => {
+        const updated = await load();
+        if (updated && updated.extraction_status !== 'PROCESSING') {
+          clearInterval(interval);
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [invoice?.extraction_status]);
 
   const handleStatusUpdate = async () => {
     setUpdating(true);
@@ -60,6 +76,48 @@ const InvoiceDetails = () => {
   if (loading) return <Layout title="Invoice Details"><LoadingSpinner /></Layout>;
   if (error) return <Layout title="Invoice Details"><ErrorMessage message={error} /></Layout>;
   if (!invoice) return null;
+
+  if (invoice.extraction_status === 'PROCESSING') {
+    return (
+      <Layout title={`Invoice ${invoice.invoice_number || 'Processing...'}`}>
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={() => navigate(-1)} className="btn-ghost px-2 py-2">
+            <ArrowLeft size={16} />
+          </button>
+          <div className="flex-1">
+            <h2 className="text-xl font-bold text-slate-900">Processing Invoice...</h2>
+          </div>
+        </div>
+        <div className="card p-12 flex flex-col items-center justify-center space-y-4">
+          <LoadingSpinner size={40} />
+          <h3 className="text-lg font-semibold text-slate-800">AI is extracting data</h3>
+          <p className="text-slate-500 text-center max-w-md">
+            The AI model is currently analyzing <b>{invoice.original_file_name}</b>. 
+            Depending on your computer's hardware, this can take 2 to 5 minutes.
+            Please wait...
+          </p>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (invoice.extraction_status === 'FAILED') {
+    return (
+      <Layout title="Extraction Failed">
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={() => navigate(-1)} className="btn-ghost px-2 py-2">
+            <ArrowLeft size={16} />
+          </button>
+          <div className="flex-1">
+            <h2 className="text-xl font-bold text-slate-900">Extraction Failed</h2>
+          </div>
+        </div>
+        <div className="card p-8">
+          <ErrorMessage message="The invoice data could not be extracted. The image may be too blurry, or the AI pipeline timed out." />
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title={`Invoice ${invoice.invoice_number || 'Details'}`}>

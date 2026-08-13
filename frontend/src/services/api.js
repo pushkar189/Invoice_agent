@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 180000, // 3 min for AI operations
+  timeout: 600000, // 10 min for AI operations
 });
 
 // Attach token to every request

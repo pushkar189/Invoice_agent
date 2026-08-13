@@ -33,6 +33,8 @@ export const getStatusColor = (status) => {
     OVERDUE: 'badge-danger',
     CANCELLED: 'badge-slate',
     REVIEW: 'badge-purple',
+    FAILED: 'badge-danger',
+    PROCESSING: 'badge-info',
   };
   return map[status] || 'badge-slate';
 };

@@ -106,8 +106,12 @@ const startServer = async () => {
     await ensureDir(path.resolve(config.upload.dir));
     logger.info(`Upload directory ready: ${path.resolve(config.upload.dir)}`);
 
-    // Test DB connection
-    await db.testConnection();
+    // Test DB connection (non-fatal)
+    try {
+      await db.testConnection();
+    } catch (dbErr) {
+      logger.error(`⚠️  Database connection failed: ${dbErr.message}. Invoices cannot be uploaded or viewed until DB is reachable.`);
+    }
 
     // Check Ollama (non-fatal)
     const ollamaHealth = await checkOllamaHealth();
@@ -124,6 +128,25 @@ const startServer = async () => {
       logger.info(`📋 Environment: ${config.nodeEnv}`);
       logger.info(`🤖 AI Model: ${config.ollama.modelName} @ ${config.ollama.url}`);
     });
+
+    // Cleanup job: mark invoices stuck in PROCESSING for >15 min as FAILED
+    const cleanupStuckInvoices = async () => {
+      try {
+        const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+        const { rowCount } = await db.query(
+          `UPDATE invoices SET extraction_status = 'FAILED', updated_at = NOW()
+           WHERE extraction_status = 'PROCESSING' AND created_at < $1`,
+          [cutoff]
+        );
+        if (rowCount > 0) logger.warn(`Cleanup: marked ${rowCount} stuck invoice(s) as FAILED`);
+      } catch (e) {
+        logger.error(`Cleanup job error: ${e.message}`);
+      }
+    };
+    // Run asynchronously, then every 5 minutes
+    cleanupStuckInvoices().catch(() => {});
+    setInterval(cleanupStuckInvoices, 5 * 60 * 1000);
+
   } catch (err) {
     logger.error(`❌ Failed to start server: ${err.message}`);
     process.exit(1);
@@ -131,5 +154,6 @@ const startServer = async () => {
 };
 
 startServer();
+
 
 export default app;

@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { processInvoice, getInvoices, getInvoiceById } from '../services/invoice.service.js';
+import { processInvoice, createPlaceholderInvoiceRecord, getInvoices, getInvoiceById } from '../services/invoice.service.js';
 import db from '../config/database.js';
 import { config } from '../config/env.js';
 import { createError } from '../middleware/error.middleware.js';
@@ -13,12 +13,15 @@ export const upload = async (req, res, next) => {
     }
 
     logger.info(`Invoice upload received: ${req.file.originalname} (${req.file.size} bytes)`);
-    const result = await processInvoice(req.file);
+    const invoiceId = await createPlaceholderInvoiceRecord(req.file);
+    processInvoice(req.file, invoiceId).catch((err) => {
+      logger.error(`Background invoice processing failed for ${invoiceId}: ${err.message}`);
+    });
 
-    res.status(201).json({
+    res.status(202).json({
       success: true,
-      message: 'Invoice processed successfully',
-      data: result,
+      message: 'Invoice uploaded successfully. Processing has started in the background.',
+      data: { invoiceId },
     });
   } catch (err) {
     next(err);

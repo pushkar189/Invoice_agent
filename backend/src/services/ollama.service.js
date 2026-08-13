@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 
 const ollamaClient = axios.create({
   baseURL: config.ollama.url,
-  timeout: 120000, // 2 minutes for large model responses
+  timeout: 600000, // 10 minutes for large model responses
 });
 
 /**

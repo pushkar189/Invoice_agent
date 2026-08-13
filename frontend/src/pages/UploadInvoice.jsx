@@ -9,8 +9,6 @@ const STAGES = [
   'Uploading File',
   'Extracting Text',
   'AI Analysis',
-  'Validating Financials',
-  'Detecting Duplicates',
   'Saving to Database',
   'Complete',
 ];
@@ -24,6 +22,7 @@ const UploadInvoice = () => {
   const [stage, setStage] = useState(-1);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [polling, setPolling] = useState(false);
 
   const handleFile = (f) => {
     const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
@@ -61,6 +60,43 @@ const UploadInvoice = () => {
     return interval;
   };
 
+  const pollInvoiceStatus = async (invoiceId) => {
+    setPolling(true);
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts += 1;
+      try {
+        const res = await invoicesApi.get(invoiceId);
+        const invoice = res.data.data;
+
+        if (invoice.extraction_status === 'COMPLETED' || invoice.extraction_status === 'FAILED') {
+          clearInterval(interval);
+          setResult(invoice);
+          setStage(STAGES.length - 1);
+          setUploading(false);
+          setPolling(false);
+          // Show error message if extraction failed
+          if (invoice.extraction_status === 'FAILED') {
+            setError('AI extraction failed. The image may be too low resolution or blurry. Please try a clearer image or PDF.');
+          }
+          return;
+        }
+      } catch (pollErr) {
+        clearInterval(interval);
+        setPolling(false);
+        setUploading(false);
+        setError('Unable to fetch invoice status. Please try again later.');
+      }
+
+      if (attempts >= 60) { // 3 minutes max
+        clearInterval(interval);
+        setPolling(false);
+        setUploading(false);
+        setError('Processing is taking longer than expected. Please check the Invoices list in a few minutes.');
+      }
+    }, 3000);
+  };
+
   const handleUpload = async () => {
     if (!file) return;
     setUploading(true);
@@ -80,13 +116,19 @@ const UploadInvoice = () => {
         }
       });
       clearInterval(stageInterval);
-      setStage(STAGES.length - 1);
-      setResult(res.data.data);
+      setStage(STAGES.length - 2);
+      const invoiceId = res.data.data?.invoiceId;
+      setResult({ invoiceId, extraction_status: 'PROCESSING' });
+      if (invoiceId) {
+        pollInvoiceStatus(invoiceId);
+      } else {
+        setError('Upload succeeded but no invoice ID was returned.');
+        setUploading(false);
+      }
     } catch (err) {
       clearInterval(stageInterval);
       setStage(-1);
       setError(err.response?.data?.message || 'Upload failed. Please try again.');
-    } finally {
       setUploading(false);
     }
   };
@@ -195,31 +237,70 @@ const UploadInvoice = () => {
               <ul className="text-xs text-slate-500 space-y-1">
                 <li>→ Text is extracted from PDF or OCR'd from images</li>
                 <li>→ Gemma AI analyzes and extracts structured data</li>
-                <li>→ Financial totals are independently recalculated</li>
-                <li>→ Duplicates and anomalies are detected</li>
-                <li>→ Invoice is saved with full validation report</li>
+                <li>→ Anomalies are detected</li>
+                <li>→ Invoice is saved to the database</li>
               </ul>
             </div>
           </>
         ) : (
-          /* Success Result */
+                  /* Result Card */
           <div className="space-y-4 animate-slide-up">
-            <div className="card p-6 text-center">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-50 flex items-center justify-center animate-float">
-                <CheckCircle2 size={32} className="text-emerald-600" />
+            <div className={`card p-6 text-center ${result.extraction_status === 'FAILED' ? 'border-red-200 bg-red-50' : ''}`}>
+              <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center animate-float
+                ${result.extraction_status === 'FAILED' ? 'bg-red-100' : 'bg-emerald-50'}`}>
+                {result.extraction_status === 'FAILED'
+                  ? <XCircle size={32} className="text-red-500" />
+                  : <CheckCircle2 size={32} className="text-emerald-600" />}
               </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-1">Invoice Processed!</h3>
-              <p className="text-sm text-slate-500">AI extraction complete with {Math.round((result.confidenceScore || 0) * 100)}% confidence</p>
+              <h3 className="text-xl font-bold text-slate-900 mb-1">
+                {result.extraction_status === 'FAILED'
+                  ? 'Extraction Failed'
+                  : result.invoice_number ? 'Invoice Processed!' : 'Upload Received!'}
+              </h3>
+              <p className="text-sm text-slate-500">
+                {result.extraction_status === 'FAILED'
+                  ? 'The image quality was too low for OCR or AI extraction. Please upload a clearer, higher-resolution image or a text-based PDF.'
+                  : result.invoice_number
+                    ? `AI extraction complete with ${Math.round((result.extraction?.confidence_score || 0) * 100)}% confidence`
+                    : 'Invoice uploaded. AI is processing in the background.'}
+              </p>
             </div>
 
             <div className="card p-5 space-y-3">
-              <div className="flex justify-between"><span className="text-slate-500 text-sm">Invoice #</span><span className="text-slate-900 font-medium">{result.invoiceNumber || 'Not detected'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 text-sm">Vendor</span><span className="text-slate-900">{result.vendor || 'Not detected'}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 text-sm">Total Amount</span><span className="text-slate-900 font-semibold">{formatCurrency(result.total)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 text-sm">Status</span><span className={`text-sm font-medium ${result.status === 'REVIEW' ? 'text-purple-600' : 'text-emerald-600'}`}>{result.status}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 text-sm">Flags</span><span className="text-sm">{result.flagCount > 0 ? <span className="text-red-600">{result.flagCount} flags</span> : <span className="text-emerald-600">No flags</span>}</span></div>
-              {result.validationResult && (
-                <div className="flex justify-between"><span className="text-slate-500 text-sm">Validation</span><span className={`text-sm font-medium ${result.validationResult.status === 'VALID' ? 'text-emerald-600' : 'text-amber-600'}`}>{result.validationResult.status}</span></div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 text-sm">Invoice ID</span>
+                <span className="text-slate-900 font-mono text-xs">{result.id || result.invoiceId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 text-sm">Extraction Status</span>
+                <span className={`text-sm font-semibold px-2 py-0.5 rounded-full
+                  ${result.extraction_status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700'
+                  : result.extraction_status === 'FAILED' ? 'bg-red-100 text-red-700'
+                  : 'bg-amber-100 text-amber-700'}`}>
+                  {result.extraction_status}
+                </span>
+              </div>
+              {result.extraction_status === 'COMPLETED' && (
+                <>
+                  <div className="flex justify-between"><span className="text-slate-500 text-sm">Invoice #</span><span className="text-slate-900 font-medium">{result.invoice_number || 'Not detected'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500 text-sm">Vendor</span><span className="text-slate-900">{result.vendor_name || 'Not detected'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500 text-sm">Total Amount</span><span className="text-slate-900 font-semibold">{formatCurrency(result.total)}</span></div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 text-sm">Status</span>
+                    <span className={`text-sm font-medium ${result.status === 'REVIEW' ? 'text-purple-600' : 'text-emerald-600'}`}>{result.status}</span>
+                  </div>
+                </>
+              )}
+              {result.extraction_status === 'FAILED' && (
+                <div className="text-xs text-red-600 bg-red-50 rounded-lg p-3 mt-1">
+                  <strong>Tips for better results:</strong>
+                  <ul className="mt-1 space-y-1 list-disc list-inside">
+                    <li>Use a PDF instead of an image for best accuracy</li>
+                    <li>If using an image, ensure it is at least 300 DPI</li>
+                    <li>Make sure the invoice is not blurry or rotated</li>
+                    <li>Avoid screenshots of low-resolution invoices</li>
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -237,10 +318,12 @@ const UploadInvoice = () => {
             )}
 
             <div className="flex gap-3">
-              <button onClick={() => navigate(`/invoices/${result.invoiceId}`)} className="btn-primary flex-1 justify-center">
-                View Invoice <ArrowRight size={14} />
-              </button>
-              <button onClick={reset} className="btn-secondary">Upload Another</button>
+              {result.extraction_status !== 'FAILED' && (
+                <button onClick={() => navigate(`/invoices/${result.id || result.invoiceId}`)} className="btn-primary flex-1 justify-center">
+                  View Invoice <ArrowRight size={14} />
+                </button>
+              )}
+              <button onClick={reset} className={`btn-secondary ${result.extraction_status === 'FAILED' ? 'flex-1 justify-center' : ''}`}>Upload Another</button>
             </div>
           </div>
         )}
