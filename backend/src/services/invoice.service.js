@@ -1,14 +1,13 @@
 import path from 'path';
 import db from '../config/database.js';
 import { extractTextFromPDF } from './pdf.service.js';
-import { extractTextFromImage } from './ocr.service.js';
 import { extractInvoiceData } from './gemma.service.js';
 import { detectAnomalies } from './anomaly.service.js';
 import { config } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * STEP 1: Extract text from file (PDF or image).
+ * STEP 1: Extract text from file (PDF).
  */
 const extractTextFromFile = async (filePath, mimeType) => {
   const ext = path.extname(filePath).toLowerCase();
@@ -17,15 +16,15 @@ const extractTextFromFile = async (filePath, mimeType) => {
   if (ext === '.pdf') {
     const { text, isScanned } = await extractTextFromPDF(filePath);
     if (isScanned || text.length < 100) {
-      logger.info('PDF appears scanned or has insufficient text — using OCR');
-      const ocrText = await extractTextFromImage(filePath);
-      return ocrText || text;
+      logger.info('PDF appears scanned or has insufficient text — AI might struggle.');
     }
     return text;
   }
 
-  // Image files
-  return extractTextFromImage(filePath);
+  throw Object.assign(new Error(`Unsupported file type: ${ext}`), {
+    errorCode: 'UNSUPPORTED_FILE_TYPE',
+    statusCode: 422,
+  });
 };
 
 /**

@@ -5,19 +5,35 @@ const require = createRequire(import.meta.url);
 
 /**
  * Extract text from a PDF file.
- * Uses pdf-parse for text-based PDFs.
+ * Uses pdfjs-dist for reliable text extraction from modern PDFs.
  * Returns { text, pageCount, isScanned }
  */
 export const extractTextFromPDF = async (filePath) => {
   logger.info(`Extracting text from PDF: ${filePath}`);
   try {
-    const pdfParse = require('pdf-parse');
     const fs = await import('fs');
     const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer);
-
-    const text = data.text?.trim() || '';
-    const pageCount = data.numpages || 1;
+    const data = new Uint8Array(dataBuffer);
+    
+    // Import pdfjs-dist using the legacy build for Node.js compatibility
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    
+    // Use the standard font data url to avoid warnings
+    const doc = await pdfjs.getDocument({
+      data,
+      standardFontDataUrl: 'node_modules/pdfjs-dist/standard_fonts/'
+    }).promise;
+    
+    const pageCount = doc.numPages || 1;
+    let text = '';
+    
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str).join(' ') + '\n';
+    }
+    
+    text = text.trim();
 
     // Heuristic: if less than 50 chars per page on average, it's likely scanned
     const avgCharsPerPage = text.length / pageCount;

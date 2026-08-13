@@ -3,7 +3,7 @@ import path from 'path';
 import { config } from '../config/env.js';
 import { generateSafeFilename, ensureDir } from '../utils/file.js';
 
-const ALLOWED_MIMETYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+const ALLOWED_MIMETYPES = ['application/pdf'];
 
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
@@ -22,7 +22,7 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
-  const allowedExts = ['.pdf', '.png', '.jpg', '.jpeg'];
+  const allowedExts = ['.pdf'];
 
   if (!allowedExts.includes(ext)) {
     return cb(new Error(`Unsupported file type: ${ext}`), false);

@@ -25,11 +25,11 @@ const UploadInvoice = () => {
   const [polling, setPolling] = useState(false);
 
   const handleFile = (f) => {
-    const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
-    const allowedExt = ['.pdf', '.png', '.jpg', '.jpeg'];
+    const allowed = ['application/pdf'];
+    const allowedExt = ['.pdf'];
     const ext = f.name.split('.').pop().toLowerCase();
     if (!allowed.includes(f.type) && !allowedExt.includes('.' + ext)) {
-      setError('Unsupported file type. Please upload PDF, PNG, or JPG.');
+      setError('Unsupported file type. Please upload a PDF.');
       return;
     }
     if (f.size > 10 * 1024 * 1024) {
@@ -77,7 +77,7 @@ const UploadInvoice = () => {
           setPolling(false);
           // Show error message if extraction failed
           if (invoice.extraction_status === 'FAILED') {
-            setError('AI extraction failed. The image may be too low resolution or blurry. Please try a clearer image or PDF.');
+            setError('AI extraction failed. Please ensure you upload a valid text-based PDF.');
           }
           return;
         }
@@ -156,7 +156,7 @@ const UploadInvoice = () => {
               onDrop={handleDrop}
               onClick={() => !uploading && document.getElementById('file-input').click()}
             >
-              <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" className="hidden"
+              <input id="file-input" type="file" accept=".pdf" className="hidden"
                 onChange={e => e.target.files[0] && handleFile(e.target.files[0])} />
 
               <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center animate-float">
@@ -165,7 +165,7 @@ const UploadInvoice = () => {
               <h3 className="text-base font-semibold text-slate-800 mb-1">
                 {dragOver ? 'Drop your invoice here' : 'Drop invoice or click to browse'}
               </h3>
-              <p className="text-sm text-slate-500">PDF, PNG, JPG · Max 10MB</p>
+              <p className="text-sm text-slate-500">PDF · Max 10MB</p>
             </div>
 
             {/* Selected File */}
@@ -235,7 +235,7 @@ const UploadInvoice = () => {
             <div className="mt-6 p-4 bg-primary-50 border border-primary-200 rounded-xl animate-slide-up" style={{ animationDelay: '0.1s' }}>
               <h4 className="text-xs font-semibold text-primary-700 mb-2">What happens when you upload?</h4>
               <ul className="text-xs text-slate-500 space-y-1">
-                <li>→ Text is extracted from PDF or OCR'd from images</li>
+                <li>→ Text is extracted from PDF</li>
                 <li>→ Gemma AI analyzes and extracts structured data</li>
                 <li>→ Anomalies are detected</li>
                 <li>→ Invoice is saved to the database</li>
@@ -259,7 +259,7 @@ const UploadInvoice = () => {
               </h3>
               <p className="text-sm text-slate-500">
                 {result.extraction_status === 'FAILED'
-                  ? 'The image quality was too low for OCR or AI extraction. Please upload a clearer, higher-resolution image or a text-based PDF.'
+                  ? 'Extraction failed. Please ensure you upload a valid text-based PDF.'
                   : result.invoice_number
                     ? `AI extraction complete with ${Math.round((result.extraction?.confidence_score || 0) * 100)}% confidence`
                     : 'Invoice uploaded. AI is processing in the background.'}
@@ -295,10 +295,8 @@ const UploadInvoice = () => {
                 <div className="text-xs text-red-600 bg-red-50 rounded-lg p-3 mt-1">
                   <strong>Tips for better results:</strong>
                   <ul className="mt-1 space-y-1 list-disc list-inside">
-                    <li>Use a PDF instead of an image for best accuracy</li>
-                    <li>If using an image, ensure it is at least 300 DPI</li>
-                    <li>Make sure the invoice is not blurry or rotated</li>
-                    <li>Avoid screenshots of low-resolution invoices</li>
+                    <li>Use a text-based PDF instead of a scanned PDF for best accuracy</li>
+                    <li>Avoid uploading malformed or encrypted PDFs</li>
                   </ul>
                 </div>
               )}

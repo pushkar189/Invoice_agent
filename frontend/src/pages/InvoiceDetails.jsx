@@ -113,7 +113,7 @@ const InvoiceDetails = () => {
           </div>
         </div>
         <div className="card p-8">
-          <ErrorMessage message="The invoice data could not be extracted. The image may be too blurry, or the AI pipeline timed out." />
+          <ErrorMessage message="The invoice data could not be extracted. The PDF may be scanned/malformed, or the AI pipeline timed out." />
         </div>
       </Layout>
     );
